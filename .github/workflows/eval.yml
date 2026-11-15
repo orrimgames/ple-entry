@@ -4,10 +4,17 @@ on:
     inputs:
       tasks:
         description: 'Comma-separated task ids, or "all"'
-        default: 'all'
+        default: 'data-hall-mep-routing'
       model:
-        description: 'Model name the proxy serves (e.g. nim-deepseek, gemini-3.1-pro-preview)'
+        description: 'Model name the proxy serves (nim-deepseek, nim-kimi, nim-glm, gemini-3.1-pro-preview)'
         default: 'nim-deepseek'
+      run_eval:
+        description: 'Run dev-set eval (false = kit check only)'
+        type: boolean
+        default: false
+      time_budget:
+        description: 'Harness clock budget in seconds for iteration runs'
+        default: '2700'
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -24,7 +31,7 @@ jobs:
       - name: Start model proxy
         run: |
           cd ple
-          $HOME/.local/bin/uv run --with litellm[proxy] litellm --config ../entry/proxy/litellm_config.yaml --port 4000 &
+          $HOME/.local/bin/uv run --with 'litellm[proxy]' litellm --config ../entry/proxy/litellm_config.yaml --host 0.0.0.0 --port 4000 &
           sleep 20
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -38,3 +45,65 @@ jobs:
           MODEL_PROXY_URL: http://localhost:4000
           MODEL_PROXY_KEY: ${{ secrets.MODEL_PROXY_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  eval:
+    if: ${{ inputs.run_eval == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: entry }
+      - uses: actions/checkout@v4
+        with: { repository: google-research/ple, path: ple }
+      - name: Install uv + harbor
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          $HOME/.local/bin/uv tool install harbor==0.20.0 --with websockets
+      - name: Make iteration variant of the entry
+        run: |
+          cd entry
+          python3 - <<'PY'
+          import re
+          p = 'submission.yaml'
+          s = open(p).read()
+          s = re.sub(r'model_api:.*', 'model_api: openai-compatible/${{ inputs.model }}', s)
+          if 'model_base_url' not in s:
+              s += '\nmodel_base_url: https://llm.example.org/v1\n'
+          open(p, 'w').write(s)
+          print(s)
+          PY
+      - name: Write ci.env (not committed)
+        run: |
+          {
+            echo "MODEL_API_KEY=${{ secrets.MODEL_PROXY_KEY }}"
+            echo "JUDGE_BASE_URL=http://localhost:4000/v1"
+            echo "JUDGE_API_KEY=${{ secrets.MODEL_PROXY_KEY }}"
+            echo "JUDGE_MODEL=nim-kimi"
+            echo "HF_TOKEN=${{ secrets.HF_TOKEN }}"
+            echo "PLE_TIME_BUDGET_SEC=${{ inputs.time_budget }}"
+          } > ple/ci.env
+      - name: Start model proxy
+        run: |
+          cd ple
+          $HOME/.local/bin/uv run --with 'litellm[proxy]' litellm --config ../entry/proxy/litellm_config.yaml --host 0.0.0.0 --port 4000 &
+          sleep 20
+          curl -s -o /dev/null -w '%{http_code}\n' http://localhost:4000/v1/models -H "Authorization: Bearer ${{ secrets.MODEL_PROXY_KEY }}"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          MODEL_PROXY_KEY: ${{ secrets.MODEL_PROXY_KEY }}
+      - name: Run dev-set eval
+        run: |
+          cd ple
+          $HOME/.local/bin/uv run python eval/run.py ../entry \
+            --env-file ci.env \
+            --tasks '${{ inputs.tasks }}' \
+            --trials 1 \
+            --model-base-url http://localhost:4000/v1 \
+            --out runs/out
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-run
+          path: ple/runs/out
