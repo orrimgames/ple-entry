@@ -141,6 +141,9 @@ How to work:
 improve it.
 - Produce office and binary formats (docx, xlsx, pdf, ...) with code, such as python3 and the libraries in the \
 container, so they are real files of that format.
+- There is no internet, so nothing can be installed: discover what the container already has (python3 -c "import \
+..."; common ones include numpy, pandas, openpyxl, ezdxf, ifcopenshell, fitz/PyMuPDF, PIL) and use it. Engineering \
+formats like DXF and IFC are text or have python libraries; never try to read them as one flat text dump.
 - Before you finish, open every deliverable again and check that it is complete and readable.
 - You have about {minutes} minutes in total; the time left is shown after the results of your tools.
 
