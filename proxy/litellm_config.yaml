@@ -11,9 +11,9 @@ model_list:
       model: openai/deepseek-ai/deepseek-v4.1-flash
       api_base: https://integrate.api.nvidia.com/v1
       api_key: os.environ/NVIDIA_API_KEY
-  - model_name: nim-kimi
+  - model_name: nim-minimax
     litellm_params:
-      model: openai/moonshotai/kimi-k2.6
+      model: openai/minimaxai/minimax-m3.1-flash
       api_base: https://integrate.api.nvidia.com/v1
       api_key: os.environ/NVIDIA_API_KEY
   - model_name: nim-glm

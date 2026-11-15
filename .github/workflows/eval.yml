@@ -6,8 +6,8 @@ on:
         description: 'Comma-separated task ids, or "all"'
         default: 'data-hall-mep-routing'
       model:
-        description: 'Model name the proxy serves (nim-deepseek, nim-kimi, nim-glm, gemini-3.1-pro-preview)'
-        default: 'nim-deepseek'
+        description: 'Model name the proxy serves (nim-glm, nim-minimax, nim-deepseek, gemini-3.1-pro-preview)'
+        default: 'nim-glm'
       run_eval:
         description: 'Run dev-set eval (false = kit check only)'
         type: boolean
@@ -56,7 +56,7 @@ jobs:
             echo "MODEL_API_KEY=${{ secrets.MODEL_PROXY_KEY }}"
             echo "JUDGE_BASE_URL=http://localhost:4000/v1"
             echo "JUDGE_API_KEY=${{ secrets.MODEL_PROXY_KEY }}"
-            echo "JUDGE_MODEL=nim-kimi"
+            echo "JUDGE_MODEL=nim-glm"
             echo "HF_TOKEN=${{ secrets.HF_TOKEN }}"
           } > ple/ci.env
       - name: kit check (iteration variant)
@@ -97,7 +97,7 @@ jobs:
             echo "MODEL_API_KEY=${{ secrets.MODEL_PROXY_KEY }}"
             echo "JUDGE_BASE_URL=http://localhost:4000/v1"
             echo "JUDGE_API_KEY=${{ secrets.MODEL_PROXY_KEY }}"
-            echo "JUDGE_MODEL=nim-kimi"
+            echo "JUDGE_MODEL=nim-glm"
             echo "HF_TOKEN=${{ secrets.HF_TOKEN }}"
             echo "PLE_TIME_BUDGET_SEC=${{ inputs.time_budget }}"
           } > ple/ci.env
