@@ -161,6 +161,40 @@ continue without them: what the task requires, what you found in the files, ever
 its path and state), the numbers and decisions so far, and what remains to do. Be specific."""
 
 
+PLANNER = """You are the planner for an engineering task in a Linux container. Your tools act inside it: bash (it \
+starts in {workdir}) and read_file. The container has no internet access.
+
+Read the whole task, then inspect the files you were given (list them, open the important ones, check their \
+formats). Do not create, change or delete anything: this step only reads.
+
+Then answer without calling a tool, with a plan for the engineer who will do the work:
+- DELIVERABLES: every file or answer the task requires, each with its exact path, name and format, and how each \
+will be checked (a test, a format rule, a rubric point). This list decides the score, so make it complete.
+- APPROACH: the order of work, the tools or libraries to use, and the key computations or decisions, with units.
+- RISKS: what is most likely to go wrong or be missed, and how the engineer should verify each risky part.
+Be specific and short."""
+
+VERIFIER = """You are an independent verifier of finished engineering work in a Linux container. Your tools act \
+inside it: bash (it starts in {workdir}), read_file, and any task tools listed below.{mcp}
+
+Check the work against the task, step by step:
+- Re-read the task's deliverable list. For each required file: confirm it exists at the exact path and name, in \
+the required format, opens and parses, and is complete (not truncated, not placeholder).
+- Recompute the key numbers yourself with code; check units and that results satisfy the task's stated limits or \
+test criteria.
+- Check the task's requirements one by one; do not trust the engineer's summary.
+- Do not create, change or delete anything: this step only reads.
+
+Then answer without calling a tool. If every deliverable is present, complete and correct, answer exactly PASS. \
+Otherwise list each gap concretely: what is wrong, where, and what to fix, most important first."""
+
+PLAN_SHARE = float(os.environ.get("PLAN_SHARE", "0.07"))
+CHECK_SHARE = float(os.environ.get("CHECK_SHARE", "0.25"))
+VERIFY_LEFT_SHARE = float(os.environ.get("VERIFY_LEFT_SHARE", "0.08"))
+MAX_FIX_ROUNDS = int(os.environ.get("MAX_FIX_ROUNDS", "2"))
+MIN_STEP_SEC = 300
+
+
 def tool(
     name: str, description: str, required: list[str], **properties: Any
 ) -> dict[str, Any]:
@@ -800,9 +834,27 @@ class StreamCut(openai.OpenAIError):  # pylint: disable=g-bad-exception-name
 class Agent:
   """Manages the conversation, tool execution, and context compaction loop."""
 
-  def __init__(self, session: taskbridge.Session):
+  def __init__(
+      self,
+      session: taskbridge.Session,
+      system: str = SYSTEM,
+      read_only: bool = False,
+      phase_deadline: float = 0.0,
+      first_user: str | None = None,
+      use_mcp: bool = True,
+  ):
     self.session = session
-    self.tools = list(TOOLS)
+    self.system = system
+    # when the phase must end: stop when this many seconds of task time are
+    # still left (0 = run to the task's own end)
+    self.phase_deadline = phase_deadline
+    self.first_user = first_user
+    self.use_mcp = use_mcp
+    self.tools = (
+        [t for t in TOOLS if t["function"]["name"] in ("bash", "read_file")]
+        if read_only
+        else list(TOOLS)
+    )
     self.mcp: dict[str, tuple[MCPServer, dict[str, Any]]] = {}
     self.messages: list[dict[str, Any]] = []
     self.prompt_tokens = 0
@@ -826,7 +878,7 @@ class Agent:
     Returns:
       The final summary message produced by the agent.
     """
-    mcp = await self.connect_mcp()
+    mcp = await self.connect_mcp() if self.use_mcp else ""
     left = self.session.time_left()
     # time kept for the final summary: FINISH_MARGIN_SEC, or a quarter of a
     # short task's time
@@ -835,23 +887,24 @@ class Agent:
         if left is None
         else min(FINISH_MARGIN_SEC, max(left, 0) / 4)
     )
-    self.messages = [
-        {
-            "role": "system",
-            "content": SYSTEM.format(
-                workdir=self.session.workdir,
-                mcp=mcp,
-                minutes=int(left / 60) if left else "unlimited",
-            ),
-        },
-        {"role": "user", "content": self.session.instruction},
-    ]
+    if not self.messages:
+      self.messages = [
+          {
+              "role": "system",
+              "content": self.system.format(
+                  workdir=self.session.workdir,
+                  mcp=mcp,
+                  minutes=int(left / 60) if left else "unlimited",
+              ),
+          },
+          {"role": "user", "content": self.first_user or self.session.instruction},
+      ]
     # head: the text of an answer cut off at the output limit
     nudges, head = 0, ""
     while True:
       left = self.session.time_left()
-      if left is not None and left < self.finish_margin:
-        return await self.finish("Time is almost up.")
+      if left is not None and left < max(self.finish_margin, self.phase_deadline):
+        return await self.finish("Time is almost up for this step.")
       try:
         reply = await self.complete(head=head)
       except OutOfTime:
@@ -1780,20 +1833,87 @@ class Agent:
 
 
 async def solve(session: taskbridge.Session) -> str:
-  """Runs `Agent` on `session` and returns the final answer.
+  """Runs the planner, worker and verifier phases for `session`.
+
+  Planner (read-only) maps the deliverables and approach; worker does the
+  task with the plan; verifier (read-only) re-checks the deliverables and
+  triggers fix rounds. Phase deadlines are shares of the total task time.
 
   Args:
     session: Active task session.
 
   Returns:
-    The final summary string returned by the agent.
+    The worker's final summary string.
   """
   print(
       f"task: workdir {session.workdir}, model {MODEL},"
       f" {len(session.mcp_servers)} MCP server(s)",
       file=sys.stderr,
   )
-  return await Agent(session).run()
+  total = session.time_left()
+
+  def left_at(share: float) -> float:
+    """Seconds of task time still left when `share` of it remains."""
+    return 0.0 if total is None else total * share
+
+  def time_for(deadline: float) -> bool:
+    """`True` when at least MIN_STEP_SEC remains before `deadline`."""
+    left = session.time_left()
+    return left is None or left - deadline >= MIN_STEP_SEC
+
+  task = session.instruction
+  plan = ""
+  if time_for(left_at(1 - PLAN_SHARE)):
+    try:
+      plan = await Agent(
+          session,
+          system=PLANNER,
+          read_only=True,
+          use_mcp=False,
+          phase_deadline=left_at(1 - PLAN_SHARE),
+      ).run()
+      await session.log(f"plan: {plan[:500]}")
+    except Exception as exc:  # a failed planner must not sink the task
+      await session.log(f"planner failed: {exc}")
+  first_user = task if not plan else f"{task}\n\n## Plan\n{plan}"
+  worker = Agent(
+      session, phase_deadline=left_at(CHECK_SHARE), first_user=first_user
+  )
+  summary = await worker.run()
+  for _ in range(MAX_FIX_ROUNDS):
+    if not time_for(left_at(VERIFY_LEFT_SHARE)):
+      break
+    review = (
+        f"## Task\n{task}\n\n## Plan\n{plan}\n\n## The engineer's"
+        f" summary\n{summary}"
+    )
+    try:
+      verdict = await Agent(
+          session,
+          system=VERIFIER,
+          read_only=True,
+          phase_deadline=left_at(VERIFY_LEFT_SHARE),
+          first_user=review,
+      ).run()
+    except Exception as exc:
+      await session.log(f"verifier failed: {exc}")
+      break
+    await session.log(f"verifier: {verdict[:500]}")
+    if verdict.strip("*_. \r\n\t").upper() in ("", "PASS"):
+      break
+    if not time_for(FINISH_MARGIN_SEC + MIN_STEP_SEC):
+      break
+    worker.messages.append({
+        "role": "user",
+        "content": (
+            "A reviewer checked your files and found these"
+            f" gaps:\n{verdict}\n\nFix them, then reply with your updated"
+            " summary."
+        ),
+    })
+    worker.phase_deadline = 0.0
+    summary = await worker.run() or summary
+  return summary or session.final_message
 
 
 if __name__ == "__main__":
