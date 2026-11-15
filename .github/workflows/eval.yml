@@ -1,0 +1,40 @@
+name: PLE dev-set eval
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: 'Comma-separated task ids, or "all"'
+        default: 'all'
+      model:
+        description: 'Model name the proxy serves (e.g. nim-deepseek, gemini-3.1-pro-preview)'
+        default: 'nim-deepseek'
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: entry }
+      - uses: actions/checkout@v4
+        with: { repository: google-research/ple, path: ple }
+      - name: Install uv + harbor
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          $HOME/.local/bin/uv tool install harbor==0.20.0 --with websockets
+      - name: Start model proxy
+        run: |
+          cd ple
+          $HOME/.local/bin/uv run --with litellm[proxy] litellm --config ../entry/proxy/litellm_config.yaml --port 4000 &
+          sleep 20
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          MODEL_PROXY_KEY: ${{ secrets.MODEL_PROXY_KEY }}
+      - name: kit check
+        run: |
+          cd ple
+          $HOME/.local/bin/uv run python -m kit check ../entry
+        env:
+          MODEL_PROXY_URL: http://localhost:4000
+          MODEL_PROXY_KEY: ${{ secrets.MODEL_PROXY_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}

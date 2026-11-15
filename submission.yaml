@@ -1,0 +1,8 @@
+name: orrim-foreman
+model_api: google-cloud/gemini-3.1-pro-preview
+install: >-
+  uv venv --python 3.12 /opt/harness/venv
+  && uv pip install --python /opt/harness/venv/bin/python -r {src}/requirements.txt
+serve: /opt/harness/venv/bin/python {src}/serve.py
+env:
+  COMPACT_AT_TOKENS: "200000"
