@@ -130,7 +130,8 @@ client = openai.AsyncOpenAI(
 )
 
 SYSTEM = """You are an expert engineer working on a task in a Linux container. Your tools act inside it: bash (it \
-starts in {workdir}), read_file, write_file and edit_file. The container has no internet access.{mcp}
+starts in {workdir}), read_file, read_image (for drawing sheets, plots and other images), write_file and \
+edit_file. The container has no internet access.{mcp}
 
 How to work:
 - Read the whole task, then look at the files you were given before choosing an approach.
@@ -162,10 +163,11 @@ its path and state), the numbers and decisions so far, and what remains to do. B
 
 
 PLANNER = """You are the planner for an engineering task in a Linux container. Your tools act inside it: bash (it \
-starts in {workdir}) and read_file. The container has no internet access.
+starts in {workdir}), read_file and read_image (open drawing sheets with it). The container has no internet \
+access.
 
 Read the whole task, then inspect the files you were given (list them, open the important ones, check their \
-formats). Do not create, change or delete anything: this step only reads.
+formats, view the drawings). Do not create, change or delete anything: this step only reads.
 
 Then answer without calling a tool, with a plan for the engineer who will do the work:
 - DELIVERABLES: every file or answer the task requires, each with its exact path, name and format, and how each \
@@ -175,7 +177,8 @@ will be checked (a test, a format rule, a rubric point). This list decides the s
 Be specific and short."""
 
 VERIFIER = """You are an independent verifier of finished engineering work in a Linux container. Your tools act \
-inside it: bash (it starts in {workdir}), read_file, and any task tools listed below.{mcp}
+inside it: bash (it starts in {workdir}), read_file, read_image (view drawings and rendered deliverables with \
+it), and any task tools listed below.{mcp}
 
 Check the work against the task, step by step:
 - Re-read the task's deliverable list. For each required file: confirm it exists at the exact path and name, in \
@@ -193,6 +196,14 @@ CHECK_SHARE = float(os.environ.get("CHECK_SHARE", "0.25"))
 VERIFY_LEFT_SHARE = float(os.environ.get("VERIFY_LEFT_SHARE", "0.08"))
 MAX_FIX_ROUNDS = int(os.environ.get("MAX_FIX_ROUNDS", "2"))
 MIN_STEP_SEC = 300
+IMAGE_MAX_BYTES = int(os.environ.get("IMAGE_MAX_BYTES", "4000000"))
+IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
 
 def tool(
@@ -241,6 +252,16 @@ TOOLS = [
     tool(
         "read_file",
         "Read a text file from the task container.",
+        ["path"],
+        path={"type": "string"},
+    ),
+    tool(
+        "read_image",
+        "View an image file (png, jpg, gif, webp) from the task container:"
+        " the image is attached to the conversation for you to see. Use it"
+        " for drawing sheets, plots and rendered output. If the file is too"
+        " large, downscale or crop it with bash first (python3 PIL), then"
+        " read it again.",
         ["path"],
         path={"type": "string"},
     ),
@@ -851,12 +872,18 @@ class Agent:
     self.first_user = first_user
     self.use_mcp = use_mcp
     self.tools = (
-        [t for t in TOOLS if t["function"]["name"] in ("bash", "read_file")]
+        [
+            t
+            for t in TOOLS
+            if t["function"]["name"] in ("bash", "read_file", "read_image")
+        ]
         if read_only
         else list(TOOLS)
     )
     self.mcp: dict[str, tuple[MCPServer, dict[str, Any]]] = {}
     self.messages: list[dict[str, Any]] = []
+    # images a read_image call attaches, flushed as the next user message
+    self.pending_images: list[dict[str, Any]] = []
     self.prompt_tokens = 0
     # Each call asks for output_limit(): output_ceiling (MAX_OUTPUT_TOKENS,
     # lowered by shrink_output when the endpoint refuses that many), or less
@@ -963,6 +990,15 @@ class Agent:
         self.messages.append(
             {"role": "tool", "tool_call_id": call["id"], "content": result}
         )
+      if self.pending_images:
+        self.messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Attached image(s):"},
+                *self.pending_images,
+            ],
+        })
+        self.pending_images = []
       left = self.session.time_left()
       if left is not None:
         self.messages[-1]["content"] += f"\n[{int(left // 60)} minutes left]"
@@ -1576,6 +1612,7 @@ class Agent:
       handler = {
           "bash": self.bash,
           "read_file": self.read_file,
+          "read_image": self.read_image,
           "write_file": self.write_file,
           "edit_file": self.edit_file,
       }.get(name)
@@ -1650,6 +1687,39 @@ class Agent:
           " (python3, unzip -l, ...)"
       )
     return data.decode("utf-8", "replace") or "(empty file)"
+
+  async def read_image(self, path: str) -> str:
+    """Attaches an image from `path` for the model to see.
+
+    Args:
+      path: Image file path inside the task container.
+
+    Returns:
+      A notice that the image follows in the next message, or an error.
+    """
+    ext = posixpath.splitext(path)[1].lower()
+    mime = IMAGE_MIME.get(ext)
+    if not mime:
+      return (
+          f"error: {path}: unsupported image type {ext!r}; convert it with"
+          " bash first (e.g. python3 PIL) to png or jpg"
+      )
+    data = await self.session.read_file(self.path(path))
+    if len(data) > IMAGE_MAX_BYTES:
+      return (
+          f"error: {path} is {len(data)} bytes, over the {IMAGE_MAX_BYTES}"
+          "-byte limit; downscale or crop it with bash (python3 PIL) and"
+          " read it again"
+      )
+    import base64
+
+    self.pending_images.append({
+        "type": "image_url",
+        "image_url": {
+            "url": f"data:{mime};base64,{base64.b64encode(data).decode()}"
+        },
+    })
+    return f"{path}: image attached below ({len(data)} bytes)."
 
   async def write_file(
       self, path: str, content: str, append: bool = False
