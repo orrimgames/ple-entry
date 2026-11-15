@@ -199,6 +199,13 @@ CHECK_SHARE = float(os.environ.get("CHECK_SHARE", "0.25"))
 VERIFY_LEFT_SHARE = float(os.environ.get("VERIFY_LEFT_SHARE", "0.08"))
 MAX_FIX_ROUNDS = int(os.environ.get("MAX_FIX_ROUNDS", "2"))
 MIN_STEP_SEC = 300
+# iteration knob: treat the task as this many seconds long even when the
+# runner allows more, so dev cycles stay short (unset = use the task's clock)
+TIME_BUDGET_SEC = float(os.environ.get("PLE_TIME_BUDGET_SEC", "0") or 0)
+import time as _time
+
+_TASK_STARTED: float | None = None  # first Agent's start = the task's start
+
 IMAGE_MAX_BYTES = int(os.environ.get("IMAGE_MAX_BYTES", "4000000"))
 IMAGE_MIME = {
     ".png": "image/png",
@@ -887,6 +894,18 @@ class Agent:
     self.messages: list[dict[str, Any]] = []
     # images a read_image call attaches, flushed as the next user message
     self.pending_images: list[dict[str, Any]] = []
+    global _TASK_STARTED
+    if _TASK_STARTED is None:
+      _TASK_STARTED = _time.monotonic()
+    self.started = _TASK_STARTED
+
+  def tleft(self) -> float | None:
+    """Task seconds left, compressed to TIME_BUDGET_SEC when that is set."""
+    left = self.session.time_left()
+    if TIME_BUDGET_SEC:
+      remaining = TIME_BUDGET_SEC - (_time.monotonic() - self.started)
+      return remaining if left is None else min(left, remaining)
+    return left
     self.prompt_tokens = 0
     # Each call asks for output_limit(): output_ceiling (MAX_OUTPUT_TOKENS,
     # lowered by shrink_output when the endpoint refuses that many), or less
@@ -909,7 +928,7 @@ class Agent:
       The final summary message produced by the agent.
     """
     mcp = await self.connect_mcp() if self.use_mcp else ""
-    left = self.session.time_left()
+    left = self.tleft()
     # time kept for the final summary: FINISH_MARGIN_SEC, or a quarter of a
     # short task's time
     self.finish_margin = (
@@ -932,7 +951,7 @@ class Agent:
     # head: the text of an answer cut off at the output limit
     nudges, head = 0, ""
     while True:
-      left = self.session.time_left()
+      left = self.tleft()
       if left is not None and left < max(self.finish_margin, self.phase_deadline):
         return await self.finish("Time is almost up for this step.")
       try:
@@ -1002,7 +1021,7 @@ class Agent:
             ],
         })
         self.pending_images = []
-      left = self.session.time_left()
+      left = self.tleft()
       if left is not None:
         self.messages[-1]["content"] += f"\n[{int(left // 60)} minutes left]"
       if self.prompt_tokens > self.compact_at():
@@ -1024,7 +1043,7 @@ class Agent:
             "summary: what you delivered, where, and the key results."
         ),
     })
-    left = self.session.time_left()
+    left = self.tleft()
     # the summary call gets taskbridge.time_share(left, 30) seconds, and at
     # least 5
     reserve = (
@@ -1195,7 +1214,7 @@ class Agent:
       wait = next(waits, None)
       if wait is None:
         raise failure
-      left = self.session.time_left()
+      left = self.tleft()
       if left is not None and left - wait < reserve:
         await self.session.log(
             f"model call failed ({str(failure)[:300]}); no time left to wait"
@@ -1435,7 +1454,7 @@ class Agent:
       CutOff: If the stream times out at `left - reserve`.
       asyncio.CancelledError: If the task is cancelled during streaming.
     """
-    left = self.session.time_left()
+    left = self.tleft()
     self.max_output = self.output_limit()
     reply = Reply()
 
@@ -1671,7 +1690,7 @@ class Agent:
       Formatted exit code and command output string.
     """
     cap = int(self.session.limits.get("exec_timeout_sec") or 600)
-    left = self.session.time_left()
+    left = self.tleft()
     if left is not None:
       cap = min(cap, max(1, int(left - self.finish_margin)))
     result = await self.session.exec(
@@ -1932,7 +1951,8 @@ async def solve(session: taskbridge.Session) -> str:
       f" {len(session.mcp_servers)} MCP server(s)",
       file=sys.stderr,
   )
-  total = session.time_left()
+  clock = Agent(session)
+  total = clock.tleft()
 
   def left_at(share: float) -> float:
     """Seconds of task time still left when `share` of it remains."""
@@ -1940,7 +1960,7 @@ async def solve(session: taskbridge.Session) -> str:
 
   def time_for(deadline: float) -> bool:
     """`True` when at least MIN_STEP_SEC remains before `deadline`."""
-    left = session.time_left()
+    left = clock.tleft()
     return left is None or left - deadline >= MIN_STEP_SEC
 
   task = session.instruction
