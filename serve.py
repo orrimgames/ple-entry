@@ -898,14 +898,6 @@ class Agent:
     if _TASK_STARTED is None:
       _TASK_STARTED = _time.monotonic()
     self.started = _TASK_STARTED
-
-  def tleft(self) -> float | None:
-    """Task seconds left, compressed to TIME_BUDGET_SEC when that is set."""
-    left = self.session.time_left()
-    if TIME_BUDGET_SEC:
-      remaining = TIME_BUDGET_SEC - (_time.monotonic() - self.started)
-      return remaining if left is None else min(left, remaining)
-    return left
     self.prompt_tokens = 0
     # Each call asks for output_limit(): output_ceiling (MAX_OUTPUT_TOKENS,
     # lowered by shrink_output when the endpoint refuses that many), or less
@@ -920,6 +912,14 @@ class Agent:
     # whether calls go to the Responses API rather than Chat Completions
     self.responses = MODEL.lower().startswith(RESPONSES_MODELS)
     self.finish_margin = FINISH_MARGIN_SEC
+
+  def tleft(self) -> float | None:
+    """Task seconds left, compressed to TIME_BUDGET_SEC when that is set."""
+    left = self.session.time_left()
+    if TIME_BUDGET_SEC:
+      remaining = TIME_BUDGET_SEC - (_time.monotonic() - self.started)
+      return remaining if left is None else min(left, remaining)
+    return left
 
   async def run(self) -> str:
     """Runs the agent tool-calling loop until the task is complete.
