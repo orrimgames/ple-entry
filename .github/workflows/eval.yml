@@ -20,14 +20,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { path: entry }
+        with: { path: entry, fetch-depth: 0 }
       - uses: actions/checkout@v4
-        with: { repository: google-research/ple, path: ple }
+        with: { repository: google-research/ple, path: ple, fetch-depth: 0 }
       - name: Install uv + harbor
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           $HOME/.local/bin/uv tool install harbor==0.20.0 --with websockets
+      - name: Make iteration variant of the entry
+        run: |
+          cd entry
+          python3 - <<'PY'
+          import re
+          p = 'submission.yaml'
+          s = open(p).read()
+          s = re.sub(r'model_api:.*', 'model_api: openai-compatible/${{ inputs.model }}', s)
+          if 'model_base_url' not in s:
+              s += '\nmodel_base_url: https://llm.example.org/v1\n'
+          open(p, 'w').write(s)
+          print(s)
+          PY
       - name: Start model proxy
         run: |
           cd ple
@@ -37,23 +50,29 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           MODEL_PROXY_KEY: ${{ secrets.MODEL_PROXY_KEY }}
-      - name: kit check
+      - name: Write ci.env (not committed)
+        run: |
+          {
+            echo "MODEL_API_KEY=${{ secrets.MODEL_PROXY_KEY }}"
+            echo "JUDGE_BASE_URL=http://localhost:4000/v1"
+            echo "JUDGE_API_KEY=${{ secrets.MODEL_PROXY_KEY }}"
+            echo "JUDGE_MODEL=nim-kimi"
+            echo "HF_TOKEN=${{ secrets.HF_TOKEN }}"
+          } > ple/ci.env
+      - name: kit check (iteration variant)
         run: |
           cd ple
-          $HOME/.local/bin/uv run python -m kit check ../entry
-        env:
-          MODEL_PROXY_URL: http://localhost:4000
-          MODEL_PROXY_KEY: ${{ secrets.MODEL_PROXY_KEY }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          $HOME/.local/bin/uv run python -m kit check ../entry \
+            --env-file ci.env --model-base-url http://localhost:4000/v1
   eval:
     if: ${{ inputs.run_eval == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
-        with: { path: entry }
+        with: { path: entry, fetch-depth: 0 }
       - uses: actions/checkout@v4
-        with: { repository: google-research/ple, path: ple }
+        with: { repository: google-research/ple, path: ple, fetch-depth: 0 }
       - name: Install uv + harbor
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
