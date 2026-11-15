@@ -125,7 +125,7 @@ jobs:
         run: |
           cd ple/runs/out || exit 0
           find . -name '*.log' -size +0 | head -20
-          for f in $(find . -name 'relay.log' -o -name 'harbor.log' | head -3); do echo "=== $f"; tail -n 80 "$f" | cut -c1-300; done
+          for f in $(find . -name 'serve.log' -o -name 'egress.log' | head -3); do echo "=== $f"; tail -n 120 "$f" | cut -c1-300; done
           tail -n 60 ~/.cache/plebench/orrim-foreman/relay.log 2>/dev/null | cut -c1-300
       - name: Upload run artifacts
         if: always()
