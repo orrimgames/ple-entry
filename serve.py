@@ -1390,13 +1390,22 @@ class Agent:
     Returns:
       Estimated number of tokens in `self.messages`.
     """
-    return (
-        sum(
-            len(json.dumps({k: v for k, v in m.items() if k != "output_items"}))
-            for m in self.messages
-        )
-        // 4
-    )
+    def size(message: dict[str, Any]) -> int:
+      """JSON length of `message`, with image payloads counted flat."""
+      content = message.get("content")
+      if isinstance(content, list):
+        # an image_url part carries a base64 payload; count it at a flat
+        # ~1100 tokens (a resized sheet) instead of its raw length
+        parts, images = [], 0
+        for part in content:
+          if isinstance(part, dict) and part.get("type") == "image_url":
+            images += 1
+          else:
+            parts.append(part)
+        return len(json.dumps({**message, "content": parts})) + images * 4400
+      return len(json.dumps({k: v for k, v in message.items() if k != "output_items"}))
+
+    return sum(size(m) for m in self.messages) // 4
 
   async def stream(
       self,
