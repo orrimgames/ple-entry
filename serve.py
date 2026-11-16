@@ -1754,10 +1754,13 @@ class Agent:
       The tool output or error string.
     """
     await self.session.log(f"{name} {json.dumps(args)[:400]}")
-    if name in ("write_file", "edit_file") or (
-        name == "bash"
-        and re.search(r"(>|\bcp\b|\bmv\b|\.save\(|\.write\()", json.dumps(args))
-    ):
+    if name in ("write_file", "edit_file", "bash") and any(
+        not tok.startswith("/tmp") and not tok.startswith("crop")
+        for tok in re.findall(
+            r"[\w./-]+\.(?:md|txt|csv|json|xlsx|docx|pdf|dxf|ifc|pptx|xml|html|yaml)\b",
+            json.dumps(args) if name == "bash" else str(args.get("path", "")),
+        )
+    ) and (name != "bash" or re.search(r"(>|\bcp\b|\bmv\b|\.save\(|\.write\(|to_excel|savefig)", json.dumps(args))):
       self.wrote = True
     print(f"[{_time.monotonic():.0f}] tool {name} {json.dumps(args)[:120]}", file=sys.stderr, flush=True)
     try:
