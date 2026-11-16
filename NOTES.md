@@ -16,3 +16,4 @@ Env knobs: PLAN_SHARE, CHECK_SHARE, VERIFY_LEFT_SHARE, MAX_FIX_ROUNDS, MIN_STEP_
 
 Next: push repo once PAT approval lands, set Actions secrets, kit check, then
 dev-set baseline vs official template (Pi on Opus 5.5, 0.483 ref).
+- 2026-11-16: deploy key rotated after sandbox wipe (ple-entry-deploy-2).
