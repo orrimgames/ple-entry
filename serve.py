@@ -526,6 +526,43 @@ def drop_thinking(
   return message
 
 
+def sanitized(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  """Returns a copy of `messages` in strict Chat Completions shape.
+
+  Open models sometimes stream tool-call arguments that are not valid JSON or
+  extra message fields that are not dicts; LiteLLM then fails with
+  "'str' object has no attribute 'get'" on a later turn.
+  """
+  out = []
+  for m in messages:
+    m = dict(m)
+    if m.get("role") == "assistant":
+      for k in ("provider_specific_fields", "function_call", "audio"):
+        if k in m and not isinstance(m[k], dict):
+          del m[k]
+      calls = []
+      for c in m.get("tool_calls") or []:
+        c = dict(c)
+        fn = dict(c.get("function") or {})
+        args = fn.get("arguments")
+        if not isinstance(args, str):
+          args = json.dumps(args if args is not None else {})
+        try:
+          if not isinstance(json.loads(args or "{}"), dict):
+            args = "{}"
+        except ValueError:
+          args = "{}"
+        fn["arguments"] = args or "{}"
+        c["function"] = fn
+        calls.append(c)
+      if calls:
+        m["tool_calls"] = calls
+      elif "tool_calls" in m:
+        del m["tool_calls"]
+    out.append(m)
+  return out
+
+
 def marked(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
   """Returns the messages a Chat Completions call sends.
 
@@ -540,6 +577,7 @@ def marked(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
   Returns:
     `messages` itself for other models, or the marked copy for Claude.
   """
+  messages = sanitized(messages)
   if not CACHE_MARK:
     return messages
   out = list(messages)
