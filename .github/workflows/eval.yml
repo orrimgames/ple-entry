@@ -112,7 +112,7 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           MODEL_PROXY_KEY: ${{ secrets.MODEL_PROXY_KEY }}
       - name: Run dev-set eval
-        timeout-minutes: 50
+        timeout-minutes: 25
         continue-on-error: true
         run: |
           cd ple
@@ -122,6 +122,11 @@ jobs:
             --trials 1 \
             --model-base-url http://localhost:4000/v1 \
             --out runs/out
+      - name: Print docker state
+        if: always()
+        run: |
+          docker ps -a --format '{{.Names}} {{.Status}} {{.Image}}' | head -20
+          for c in $(docker ps -aq | head -4); do echo "=== container $c"; docker logs --tail 25 $c 2>&1 | cut -c1-250; done
       - name: Print proxy errors
         if: always()
         run: |
