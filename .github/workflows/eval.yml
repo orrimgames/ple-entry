@@ -112,7 +112,7 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           MODEL_PROXY_KEY: ${{ secrets.MODEL_PROXY_KEY }}
       - name: Run dev-set eval
-        timeout-minutes: 90
+        timeout-minutes: 50
         continue-on-error: true
         run: |
           cd ple
@@ -131,6 +131,8 @@ jobs:
         run: |
           cd ple/runs/out || exit 0
           find . -name '*.log' -size +0 | head -20
+          for f in $(find . -name 'trial.log' -o -name 'harbor.log' | head -3); do echo "=== $f"; tail -n 60 "$f" | cut -c1-300; done
+          find . -path '*agent*' -type f | head -20
           for f in $(find . -name 'serve.log' -o -name 'egress.log' | head -3); do echo "=== $f"; tail -n 120 "$f" | cut -c1-300; done
           tail -n 60 ~/.cache/plebench/orrim-foreman/relay.log 2>/dev/null | cut -c1-300
       - name: Upload run artifacts
