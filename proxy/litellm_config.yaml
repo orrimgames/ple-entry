@@ -6,6 +6,11 @@ model_list:
     litellm_params:
       model: gemini/gemini-3.1-pro-preview
       api_key: os.environ/GEMINI_API_KEY
+  - model_name: gemma-4-26b
+    litellm_params:
+      model: gemini/gemma-4-26b-a4b-it
+      api_key: os.environ/GEMINI_API_KEY
+      num_retries: 3
   - model_name: nim-deepseek
     litellm_params:
       model: openai/deepseek-ai/deepseek-v4.1-flash

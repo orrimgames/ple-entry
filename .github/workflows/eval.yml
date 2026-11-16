@@ -6,7 +6,7 @@ on:
         description: 'Comma-separated task ids, or "all"'
         default: 'data-hall-mep-routing'
       model:
-        description: 'Model name the proxy serves (nim-glm, nim-minimax, nim-deepseek, gemini-3.1-pro-preview)'
+        description: 'Model name the proxy serves (nim-glm, nim-minimax, nim-deepseek, gemma-4-26b, gemini-3.1-pro-preview)'
         default: 'nim-glm'
       run_eval:
         description: 'Run dev-set eval (false = kit check only)'
