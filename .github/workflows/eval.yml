@@ -88,6 +88,7 @@ jobs:
           s = re.sub(r'model_api:.*', 'model_api: openai-compatible/${{ inputs.model }}', s)
           if 'model_base_url' not in s:
               s += '\nmodel_base_url: https://llm.example.org/v1\n'
+          s = s.replace('env:\n', 'env:\n  PLE_TIME_BUDGET_SEC: "${{ inputs.time_budget }}"\n', 1)
           open(p, 'w').write(s)
           print(s)
           PY
