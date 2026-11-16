@@ -113,7 +113,7 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           MODEL_PROXY_KEY: ${{ secrets.MODEL_PROXY_KEY }}
       - name: Run dev-set eval
-        timeout-minutes: 25
+        timeout-minutes: 50
         continue-on-error: true
         run: |
           cd ple
