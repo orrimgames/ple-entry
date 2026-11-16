@@ -417,7 +417,14 @@ def extra_fields(part: Any, known: set[str]) -> dict[str, Any]:
     Dictionary of extra fields not in `known` whose values are not `None`.
   """
   fields = getattr(part, "model_extra", None) or {}
-  return {k: v for k, v in fields.items() if k not in known and v is not None}
+  # echo back only fields a provider needs (Gemini thought signatures, Claude
+  # thinking); other proxy fields (e.g. provider_specific_fields) break LiteLLM.
+  keep = {"extra_content", "thinking_blocks", "signature", "thought_signature"}
+  return {
+      k: v
+      for k, v in fields.items()
+      if k not in known and v is not None and k in keep
+  }
 
 
 def merged(old: Any, new: Any, key: str = "") -> Any:
