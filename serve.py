@@ -941,6 +941,7 @@ class Agent:
       use_mcp: bool = True,
   ):
     self.session = session
+    self.read_only = read_only
     self.system = system
     # when the phase must end: stop when this many seconds of task time are
     # still left (0 = run to the task's own end)
@@ -978,6 +979,8 @@ class Agent:
     # whether calls go to the Responses API rather than Chat Completions
     self.responses = MODEL.lower().startswith(RESPONSES_MODELS)
     self.finish_margin = FINISH_MARGIN_SEC
+    self.wrote = False
+    self.write_nudges = 0
 
   def tleft(self) -> float | None:
     """Task seconds left, compressed to TIME_BUDGET_SEC when that is set."""
@@ -995,6 +998,7 @@ class Agent:
     """
     mcp = await self.connect_mcp() if self.use_mcp else ""
     left = self.tleft()
+    self.first_left = left
     # time kept for the final summary: FINISH_MARGIN_SEC, or a quarter of a
     # short task's time
     self.finish_margin = (
@@ -1020,6 +1024,25 @@ class Agent:
       left = self.tleft()
       if left is not None and left < max(self.finish_margin, self.phase_deadline):
         return await self.finish("Time is almost up for this step.")
+      if (
+          not self.wrote
+          and left is not None
+          and self.first_left
+          and self.write_nudges < 3
+          and left < self.first_left * (0.7, 0.5, 0.35)[self.write_nudges]
+          and not self.read_only
+      ):
+        self.write_nudges += 1
+        self.messages.append({
+            "role": "user",
+            "content": (
+                "You have not written any deliverable file yet and much of"
+                " your time is gone. Stop inspecting inputs now: write your"
+                " best first-pass version of every required deliverable to"
+                " the exact path the task names, using the facts you have,"
+                " then refine it with the time that remains."
+            ),
+        })
       try:
         reply = await self.complete(head=head)
       except OutOfTime:
@@ -1702,6 +1725,11 @@ class Agent:
       The tool output or error string.
     """
     await self.session.log(f"{name} {json.dumps(args)[:400]}")
+    if name in ("write_file", "edit_file") or (
+        name == "bash"
+        and re.search(r"(>|\bcp\b|\bmv\b|\.save\(|\.write\()", json.dumps(args))
+    ):
+      self.wrote = True
     print(f"[{_time.monotonic():.0f}] tool {name} {json.dumps(args)[:120]}", file=sys.stderr, flush=True)
     try:
       if name == "mcp_call":
