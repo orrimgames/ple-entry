@@ -980,6 +980,7 @@ class Agent:
     self.responses = MODEL.lower().startswith(RESPONSES_MODELS)
     self.finish_margin = FINISH_MARGIN_SEC
     self.wrote = False
+    self.image_strikes = 0
     self.write_nudges = 0
 
   def tleft(self) -> float | None:
@@ -1052,6 +1053,34 @@ class Agent:
       # what it streamed is the answer if the summary call fails too
       except CutOff:
         return await self.finish("Time is almost up.")
+      except openai.APIStatusError as exc:
+        # an endpoint can refuse an image (e.g. "media could not be screened");
+        # drop the images and carry on instead of ending the whole run
+        if exc.status_code not in (400, 422) or self.image_strikes >= 3:
+          raise
+        removed = 0
+        for i, m in enumerate(self.messages):
+          if isinstance(m.get("content"), list):
+            parts = []
+            for p in m["content"]:
+              if isinstance(p, dict) and p.get("type") == "image_url":
+                removed += 1
+                p = {"type": "text", "text": "[image removed: refused by the endpoint]"}
+              parts.append(p)
+            self.messages[i] = {**m, "content": parts}
+        if not removed:
+          raise
+        self.image_strikes += 1
+        print(f"dropped {removed} refused image(s): {str(exc)[:160]}", file=sys.stderr, flush=True)
+        self.messages.append({
+            "role": "user",
+            "content": (
+                "The last image could not be processed and was removed. Do"
+                " not view that image again; use code to measure or read the"
+                " drawing data instead, and write your deliverable."
+            ),
+        })
+        continue
       arguments = [parse_arguments(call) for call in reply.calls.values()]
       if reply.text or reply.calls:
         # A turn with neither (its output went to hidden reasoning, or a content
