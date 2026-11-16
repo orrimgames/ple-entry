@@ -1068,7 +1068,13 @@ class Agent:
         self.pending_images = []
       left = self.tleft()
       if left is not None:
-        self.messages[-1]["content"] += f"\n[{int(left // 60)} minutes left]"
+        note = f"\n[{int(left // 60)} minutes left]"
+        last = self.messages[-1]
+        if isinstance(last["content"], list):
+          # an image message: `+=` would splice the note in one char at a time
+          last["content"] = [*last["content"], {"type": "text", "text": note}]
+        else:
+          last["content"] += note
       if self.prompt_tokens > self.compact_at():
         await self.compact()
 
