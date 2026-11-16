@@ -104,7 +104,7 @@ jobs:
       - name: Start model proxy
         run: |
           cd ple
-          $HOME/.local/bin/uv run --with 'litellm[proxy]' litellm --config ../entry/proxy/litellm_config.yaml --host 0.0.0.0 --port 4000 &
+          $HOME/.local/bin/uv run --with 'litellm[proxy]' litellm --config ../entry/proxy/litellm_config.yaml --host 0.0.0.0 --port 4000 > /tmp/proxy.log 2>&1 &
           sleep 20
           curl -s -o /dev/null -w '%{http_code}\n' http://localhost:4000/v1/models -H "Authorization: Bearer ${{ secrets.MODEL_PROXY_KEY }}"
         env:
@@ -120,6 +120,10 @@ jobs:
             --trials 1 \
             --model-base-url http://localhost:4000/v1 \
             --out runs/out
+      - name: Print proxy errors
+        if: always()
+        run: |
+          echo '=== proxy.log'; grep -n -B3 -A30 "has no attribute" /tmp/proxy.log | head -120 | cut -c1-300
       - name: Print harness logs
         if: always()
         run: |
