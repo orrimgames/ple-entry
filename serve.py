@@ -57,6 +57,7 @@ RESPONSES_ONLY = re.compile(
 )
 # Claude reuses a cached prompt prefix only where a request marks one
 # (marked()); other models cache on their own.
+MAX_IMAGES = int(os.environ.get("MAX_IMAGES", "8"))
 CACHE_MARK = "claude" in MODEL.lower()
 COMPACT_AT_TOKENS = int(os.environ.get("COMPACT_AT_TOKENS", "150000"))
 TOOL_RESULT_CHARS = 30_000
@@ -560,6 +561,26 @@ def sanitized(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
       elif "tool_calls" in m:
         del m["tool_calls"]
     out.append(m)
+  # some endpoints cap images per prompt (NIM minimax: 8); keep the newest
+  total = sum(
+      1
+      for m in out
+      if isinstance(m.get("content"), list)
+      for p in m["content"]
+      if isinstance(p, dict) and p.get("type") == "image_url"
+  )
+  drop = total - MAX_IMAGES
+  if drop > 0:
+    for i, m in enumerate(out):
+      if not isinstance(m.get("content"), list):
+        continue
+      parts = []
+      for p in m["content"]:
+        if drop > 0 and isinstance(p, dict) and p.get("type") == "image_url":
+          drop -= 1
+          p = {"type": "text", "text": "[earlier image omitted]"}
+        parts.append(p)
+      out[i] = {**m, "content": parts}
   return out
 
 
