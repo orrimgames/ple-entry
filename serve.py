@@ -1269,6 +1269,7 @@ class Agent:
         if reply.finish is None:
           raise StreamCut("the stream ended without a finish reason")
         await self.record(reply)
+        print(f"[{_time.monotonic():.0f}] model reply finish={reply.finish} calls={len(reply.calls)} left={self.tleft()}", file=sys.stderr, flush=True)
         return reply
       except openai.APIStatusError as exc:
         if exc.status_code == 400 and await self.remedy(str(exc)):
@@ -1701,6 +1702,7 @@ class Agent:
       The tool output or error string.
     """
     await self.session.log(f"{name} {json.dumps(args)[:400]}")
+    print(f"[{_time.monotonic():.0f}] tool {name} {json.dumps(args)[:120]}", file=sys.stderr, flush=True)
     try:
       if name == "mcp_call":
         name, args = str(args.get("tool", "")), args.get("arguments") or {}
@@ -2088,6 +2090,20 @@ async def solve(session: taskbridge.Session) -> str:
     worker.phase_deadline = 0.0
     summary = await worker.run() or summary
   return summary or session.final_message
+
+
+_solve_inner = solve
+
+
+async def solve(session: taskbridge.Session) -> str:  # pylint: disable=function-redefined
+  """Runs the phases, with a hard stop shortly after an iteration time budget."""
+  if not TIME_BUDGET_SEC:
+    return await _solve_inner(session)
+  try:
+    return await asyncio.wait_for(_solve_inner(session), TIME_BUDGET_SEC + 180)
+  except asyncio.TimeoutError:
+    print("watchdog: hard stop", file=sys.stderr, flush=True)
+    return session.final_message or "stopped by the iteration watchdog"
 
 
 if __name__ == "__main__":
