@@ -1431,7 +1431,7 @@ class Agent:
     Returns:
       `True` if `reasoning_effort` was being sent and is now dropped.
     """
-    if not self.effort or not re.search(r"reasoning[._]effort", error):
+    if not self.effort or not re.search(r"reasoning[._]effort|thinking.budget", error, re.I):
       return False
     self.effort = {}
     return True
