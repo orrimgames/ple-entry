@@ -10,7 +10,8 @@ model_list:
     litellm_params:
       model: gemini/gemma-4-26b-a4b-it
       api_key: os.environ/GEMINI_API_KEY
-      num_retries: 3
+      num_retries: 12
+      timeout: 120
   - model_name: nim-deepseek
     litellm_params:
       model: openai/deepseek-ai/deepseek-v4.1-flash
@@ -26,5 +27,10 @@ model_list:
       model: openai/z-ai/glm-5.3-flash
       api_base: https://integrate.api.nvidia.com/v1
       api_key: os.environ/NVIDIA_API_KEY
+router_settings:
+  num_retries: 12
+  retry_after: 5
+  allowed_fails: 1000
+  cooldown_time: 1
 general_settings:
   master_key: os.environ/MODEL_PROXY_KEY
